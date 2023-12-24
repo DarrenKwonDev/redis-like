@@ -1,3 +1,6 @@
+client.dSYM
+server.dSYM
+
 # possible binary files
 server
 main
