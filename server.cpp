@@ -5,7 +5,7 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
-void something(int conn_fd) {
+void serverLoop(int conn_fd) {
     assert(conn_fd > 0);
 
     char rbuf[64];
@@ -65,7 +65,7 @@ int main(int argc, char* argv[]) {
             return -1;
         }
 
-        something(conn_sock_fd);
+        serverLoop(conn_sock_fd);
 
         close(conn_sock_fd);
     }
