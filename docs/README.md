@@ -13,6 +13,9 @@ len(4 bytes) + data, len(4 bytes) + data, len(4 bytes) + data, ...
 
 ## don't block sacred server(game) loop
 
+select, poll 방식의 multiplexing에서는,
+i/o 작업은 non blocking, 즉, kernel space에서 작업 완료 여부와 상관없이 즉시 리턴되며 이후 user space에 작업 결과가 반환된다. 다만 select, poll 자체는 blocking이다.
+
 ## endian check
 
 in macos, `sysctl hw.byteorder` return 1234, which means little endian.

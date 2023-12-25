@@ -7,6 +7,42 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
+int32_t query(int fd, const char* text);
+
+int main() {
+    int client_sock_fd;
+    if ((client_sock_fd = socket(AF_INET, SOCK_STREAM, 0)) == -1) {
+        std::cout << "socket error" << std::endl;
+    }
+
+    struct sockaddr_in serv_addr;
+    serv_addr.sin_family = AF_INET;
+    serv_addr.sin_addr.s_addr = ntohl(INADDR_LOOPBACK); // 127.0.0.1
+    serv_addr.sin_port = ntohs(1234);
+    if ((connect(client_sock_fd, (const struct sockaddr*)&serv_addr, sizeof(serv_addr))) == -1) {
+        std::cout << "connect error" << std::endl;
+        return -1;
+    }
+
+    // client main logics
+    int32_t err = query(client_sock_fd, "yo this is first query");
+    if (err) {
+        goto L_DONE;
+    }
+    err = query(client_sock_fd, "behold, next second query");
+    if (err) {
+        goto L_DONE;
+    }
+    err = query(client_sock_fd, "and last shot. boom.");
+    if (err) {
+        goto L_DONE;
+    }
+
+L_DONE:
+    close(client_sock_fd);
+    return 0;
+}
+
 int32_t query(int fd, const char* text) {
 
     // 쓰기 작업
@@ -54,39 +90,5 @@ int32_t query(int fd, const char* text) {
     }
     rbuf[4 + msg_len] = '\0';
     printf("server says: %s\n", &rbuf[HEADER_SIZE]);
-    return 0;
-}
-
-int main() {
-    int client_sock_fd;
-    if ((client_sock_fd = socket(AF_INET, SOCK_STREAM, 0)) == -1) {
-        std::cout << "socket error" << std::endl;
-    }
-
-    struct sockaddr_in serv_addr;
-    serv_addr.sin_family = AF_INET;
-    serv_addr.sin_addr.s_addr = ntohl(INADDR_LOOPBACK); // 127.0.0.1
-    serv_addr.sin_port = ntohs(1234);
-    if ((connect(client_sock_fd, (const struct sockaddr*)&serv_addr, sizeof(serv_addr))) == -1) {
-        std::cout << "connect error" << std::endl;
-        return -1;
-    }
-
-    // client main logics
-    int32_t err = query(client_sock_fd, "yo this is first query");
-    if (err) {
-        goto L_DONE;
-    }
-    err = query(client_sock_fd, "behold, next second query");
-    if (err) {
-        goto L_DONE;
-    }
-    err = query(client_sock_fd, "and last shot. boom.");
-    if (err) {
-        goto L_DONE;
-    }
-
-L_DONE:
-    close(client_sock_fd);
     return 0;
 }
