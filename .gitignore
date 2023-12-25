@@ -1,6 +1,8 @@
 client.dSYM
 server.dSYM
 .DS_Store
+compile_commands.json
+.cache/
 
 # possible binary files
 server
