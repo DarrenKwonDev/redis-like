@@ -1,5 +1,6 @@
 client.dSYM
 server.dSYM
+.DS_Store
 
 # possible binary files
 server
