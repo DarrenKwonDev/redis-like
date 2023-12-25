@@ -2,6 +2,11 @@
 
 redis-like server.
 
+```text
+❗ disclaimer
+still in progress
+```
+
 ## application level tcp stream parsing protocol
 
 ```text
@@ -20,6 +25,10 @@ i/o 작업은 non blocking, 즉, kernel space에서 작업 완료 여부와 상�
 ## endian check
 
 in macos, `sysctl hw.byteorder` return 1234, which means little endian.
+
+## simple redis cli api mimicking
+
+-
 
 ## etc
 
