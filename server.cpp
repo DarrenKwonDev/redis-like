@@ -3,8 +3,10 @@
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <iostream>
+#include <map>
 #include <netinet/in.h>
 #include <sys/_types/_socklen_t.h>
 #include <sys/fcntl.h>
@@ -21,9 +23,15 @@ enum class CONN_STATE {
     STATE_END = 2, // 연결을 끊기 위한 상태
 };
 
+enum RES_CODE {
+    RES_OK = 0,
+    RES_ERR = 1,
+    RES_NX = 2,
+};
+
 #pragma pack(push, 1) // for memory padding
 struct Conn {         // connection 마다 읽기, 쓰기 버퍼가 생성되어야 함.
-    int fd = -1;
+    int32_t fd = -1;
     CONN_STATE state = CONN_STATE::STATE_REQ;
     size_t rbuf_size = 0;                             // 현재까지 읽은 데이터의 크기(read)
     size_t wbuf_size = 0;                             // 현재까지 쓴 데이터의 크기(echoing을 위해서)
@@ -33,15 +41,19 @@ struct Conn {         // connection 마다 읽기, 쓰기 버퍼가 생성되어
 };
 #pragma pack(pop)
 
-void set_fd_non_blocking(int fd);
+// 임시적 map
+// 정렬을 위해 O(logN)이 소요됨.
+static std::map<std::string, std::string> g_map;
+
+void set_fd_non_blocking(int32_t fd);
 void conn_state_req_handler(Conn* conn);
 void conn_state_res_handler(Conn* conn);
 void conn_state_end_handler(Conn* conn);
-int32_t accept_new_conn_malloc(std::vector<Conn*>& fd_to_conn, int fd);
+int32_t accept_new_conn_malloc(std::vector<Conn*>& fd_to_conn, int32_t fd);
 
 int main(int argc, char* argv[]) {
 
-    int serv_sock_fd;
+    int32_t serv_sock_fd;
     serv_sock_fd = socket(AF_INET, SOCK_STREAM, 0);
     if (serv_sock_fd == -1) {
         std::cout << "socket error" << std::endl;
@@ -49,7 +61,7 @@ int main(int argc, char* argv[]) {
     }
 
     // time-wait 상태 제거. 곧바로 재사용 가능하게.
-    int reuse_addr = 1;
+    int32_t reuse_addr = 1;
     socklen_t reuse_addr_len = sizeof(reuse_addr);
     setsockopt(serv_sock_fd, SOL_SOCKET, SO_REUSEADDR, &reuse_addr, reuse_addr_len);
 
@@ -79,7 +91,7 @@ int main(int argc, char* argv[]) {
     while (true) {
         poll_args.clear(); // 매 iteration마다 clear
 
-        // serv_sock_fd의 입력 버퍼에 데이터가 있으면 POLLIN 이벤트 발생
+        // serv_sock_fd의 입력 버퍼에 데이터가 있으면 revent에 POLLIN 이벤트 발생
         struct pollfd pfd = {serv_sock_fd, POLLIN, 0};
 
         poll_args.push_back(pfd); // poll_args[0] is serv_sock
@@ -98,14 +110,14 @@ int main(int argc, char* argv[]) {
 
         // https://pubs.opengroup.org/onlinepubs/7908799/xsh/poll.html
         // poll을 통과하면서 poll_args의 fd들의 revents에 실제 발생한 이벤트가 등록됨
-        int active_fds_cnt = poll(poll_args.data(), (nfds_t)poll_args.size(), -1); // -1 :: infinite timeout
+        int32_t active_fds_cnt = poll(poll_args.data(), (nfds_t)poll_args.size(), -1); // -1 :: infinite timeout
         if (active_fds_cnt < 0) {
             std::cout << "poll error\n";
             continue;
         }
 
         // serv_sock을 제외한 나머지 fd들에 대한 처리
-        for (int i = 1; i < poll_args.size(); i++) {
+        for (int32_t i = 1; i < poll_args.size(); i++) {
             assert(i > 0); // 0은 server socket이므로
 
             // kernel에서 발생한 이벤트에 따른 처리
@@ -114,11 +126,11 @@ int main(int argc, char* argv[]) {
 
                 // simple state machine
                 switch (conn->state) {
-                case CONN_STATE::STATE_REQ:
-                    conn_state_req_handler(conn); // POLLIN
+                case CONN_STATE::STATE_REQ: // POLLIN. 읽을 데이터가 있으니 처리해주세요
+                    conn_state_req_handler(conn);
                     break;
                 case CONN_STATE::STATE_RES:
-                    conn_state_res_handler(conn); // POLLOUT
+                    conn_state_res_handler(conn); // POLLOUT. 쓸 데이터가 있으니 처리해주세요
                     break;
                 case CONN_STATE::STATE_END:
                     conn_state_end_handler(conn);
@@ -149,9 +161,9 @@ int main(int argc, char* argv[]) {
 
 // fd를 활용한 read, write는 non blocking으로 작동하게 됩니다.
 // 데이터가 없으면 -1이 반환되고 errno에는 EAGAIN, EWOULDBLOCK 이 설정됩니다.
-void set_fd_non_blocking(int fd) {
+void set_fd_non_blocking(int32_t fd) {
     errno = 0;
-    int flags = fcntl(fd, F_GETFL, 0); // file control
+    int32_t flags = fcntl(fd, F_GETFL, 0); // file control
     if (errno) {
         std::cout << "fcntl error\n";
         return;
@@ -167,40 +179,149 @@ void set_fd_non_blocking(int fd) {
     }
 }
 
+static uint32_t do_get(const std::vector<std::string>& cmd, char* res, uint32_t* reslen) {
+    if (!g_map.count(cmd[1])) {
+        return RES_NX;
+    }
+    std::string& val = g_map[cmd[1]];
+    assert(val.size() <= MAX_MSG_CHAR_LENGTH);
+    memcpy(res, val.data(), val.size());
+    *reslen = (uint32_t)val.size();
+    std::cout << "get " << cmd[1] << " = " << val << std::endl;
+    return RES_OK;
+}
+
+static uint32_t do_set(const std::vector<std::string>& cmd, char* res, uint32_t* reslen) {
+    (void)res;
+    (void)reslen;
+    g_map[cmd[1]] = cmd[2]; // key value mapping
+    std::cout << "set " << cmd[1] << " " << cmd[2] << "\n";
+    return RES_OK;
+}
+
+static uint32_t do_del(const std::vector<std::string>& cmd, char* res, uint32_t* reslen) {
+    (void)res;
+    (void)reslen;
+    g_map.erase(cmd[1]);
+    std::cout << "del " << cmd[1] << std::endl;
+    return RES_OK;
+}
+
+// stream_byte : (stream_byte_size, 2, [len, cmd], [len, cmd])
+// payload : (2, [len, cmd], [len, cmd])
+int32_t parse_req(const char* payload, size_t stream_byte_len, std::vector<std::string>& out) {
+    if (stream_byte_len < 4) {
+        return -1;
+    }
+
+    uint32_t word_cnt = 0; // '몇 어절?'
+    memcpy(&word_cnt, &payload[0], 4);
+    word_cnt = ntohl(word_cnt);
+
+    std::cout << "word_cnt " << word_cnt << "\n";
+
+    if (word_cnt > MAX_MSG_CHAR_LENGTH) {
+        return -1;
+    }
+
+    size_t pos = 4;
+
+    // 한 어절 (len, cmd) 를 처리합니다.
+    while (word_cnt--) {
+        if (pos + 4 > stream_byte_len) {
+            return -1;
+        }
+        uint32_t sz = 0;
+        memcpy(&sz, &payload[pos], 4);
+        sz = ntohl(sz);
+        if (pos + 4 + sz > stream_byte_len) {
+            return -1;
+        }
+        out.push_back(std::string((char*)&payload[pos + 4], sz));
+        pos += 4 + sz; // 현재 위치 갱신
+    }
+
+    if (pos != stream_byte_len) {
+        return -1; // 처리된 길이와 전체 스트림 길이가 일치하는지 검사
+    }
+
+    return 0;
+}
+
+bool cmd_is(const std::string& word, const char* cmd) {
+    return 0 == strcasecmp(word.c_str(), cmd);
+}
+
+int32_t
+do_request(const char* payload, uint32_t stream_byte_len, uint32_t* rescode, char* resbuffer, uint32_t* reslen) {
+    std::vector<std::string> cmd;
+
+    if (0 != parse_req(payload, stream_byte_len, cmd)) {
+        std::cout << "parse_req error\n";
+        return -1;
+    }
+
+    if (cmd.size() == 2 && cmd_is(cmd[0], "get")) {
+        *rescode = do_get(cmd, resbuffer, reslen);
+    } else if (cmd.size() == 3 && cmd_is(cmd[0], "set")) {
+        *rescode = do_set(cmd, resbuffer, reslen);
+    } else if (cmd.size() == 2 && cmd_is(cmd[0], "del")) {
+        *rescode = do_del(cmd, resbuffer, reslen);
+    } else {
+        // cmd is not recognized
+        *rescode = RES_ERR;
+        const char* msg = "Unknown cmd";
+        strcpy((char*)resbuffer, msg);
+        *reslen = strlen(msg);
+        return 0;
+    }
+
+    return 0;
+}
+
 bool try_one_request(Conn* conn) {
     if (conn->rbuf_size < HEADER_SIZE) {
         return false;
     }
 
-    uint32_t msg_len = 0;
-    memcpy(&msg_len, &conn->rbuf[0], HEADER_SIZE);
-    msg_len = ntohl(msg_len);
-    std::cout << "msg_len " << msg_len << "\n";
+    uint32_t stream_byte_len = 0;
+    memcpy(&stream_byte_len, &conn->rbuf[0], HEADER_SIZE);
+    stream_byte_len = ntohl(stream_byte_len);
+    std::cout << "stream_byte_len " << stream_byte_len << "\n";
 
-    if (msg_len > MAX_MSG_CHAR_LENGTH) {
+    if (stream_byte_len > MAX_MSG_CHAR_LENGTH) {
         std::cout << "exceed MAX_MSG_CHAR_LENGTH\n";
         conn->state = CONN_STATE::STATE_END;
         return false;
     }
 
-    if (conn->rbuf_size < HEADER_SIZE + msg_len) {
+    if (conn->rbuf_size < HEADER_SIZE + stream_byte_len) {
         return false;
     }
 
-    printf("client said: %.*s\n", msg_len, &conn->rbuf[4]);
+    uint32_t wlen = 0;
+    uint32_t rescode = 0;
+    int32_t err = do_request(&conn->rbuf[4], stream_byte_len, &rescode, &conn->wbuf[4 + 4], &wlen);
+    if (err) {
+        conn->state = CONN_STATE::STATE_END;
+        return false;
+    }
 
-    // echoing
-    uint32_t msg_len_network = htonl(msg_len);
-    memcpy(&conn->wbuf[0], &msg_len_network, HEADER_SIZE);
-    memcpy(&conn->wbuf[4], &conn->rbuf[4], msg_len);
-    conn->wbuf_size = HEADER_SIZE + msg_len;
+    // 주의: wlen은 호스트 바이트 오더로 유지해야 함
+    uint32_t wlen_network = htonl(wlen + 4); // Include the size of the rescode
+    rescode = htonl(rescode);
 
-    size_t remain = conn->rbuf_size - (HEADER_SIZE + msg_len);
-    if (remain > 0) {
-        memmove(&conn->rbuf[0], &conn->rbuf[HEADER_SIZE + msg_len], remain);
+    memcpy(&conn->wbuf[0], &wlen_network, HEADER_SIZE);
+    memcpy(&conn->wbuf[4], &rescode, HEADER_SIZE);
+    conn->wbuf_size = wlen + HEADER_SIZE * 2;
+
+    size_t remain = conn->rbuf_size - 4 - stream_byte_len;
+    if (remain) {
+        memmove(conn->rbuf, &conn->rbuf[4 + stream_byte_len], remain);
     }
     conn->rbuf_size = remain;
 
+    // change state
     conn->state = CONN_STATE::STATE_RES;
     conn_state_res_handler(conn);
 
@@ -215,7 +336,7 @@ bool try_fill_buffer(Conn* conn) {
     ssize_t read_sz = 0;
     do {
         size_t remain = sizeof(conn->rbuf) - conn->rbuf_size; // 남은 rbuf의 크기
-        read_sz = read(conn->fd, conn->rbuf + conn->rbuf_size, remain);
+        read_sz = read(conn->fd, &conn->rbuf[conn->rbuf_size], remain);
     } while (read_sz < 0 && errno == EINTR); // signal에 의해 read()가 중단된 경우
 
     // conn->fd는 non blocking으로 작동함.
@@ -249,6 +370,7 @@ bool try_fill_buffer(Conn* conn) {
 
     while (try_one_request(conn)) {
     }
+
     return (conn->state == CONN_STATE::STATE_REQ);
 }
 
@@ -263,7 +385,11 @@ bool try_flush_buffer(Conn* conn) {
     ssize_t write_sz = 0;
     do {
         size_t remain = conn->wbuf_size - conn->wbuf_sent;
-        write_sz = write(conn->fd, conn->wbuf + conn->wbuf_sent, remain);
+
+        std::cout << "wbuf_size: " << conn->wbuf_size << std::endl;
+        std::cout << "remain: " << remain << std::endl;
+
+        write_sz = write(conn->fd, &conn->wbuf[conn->wbuf_sent], remain);
     } while (write_sz < 0 && errno == EINTR); // signal에 의해 write()가 중단된 경우
 
     // 즉시 처리할 데이터가 없는 경우
@@ -291,6 +417,7 @@ bool try_flush_buffer(Conn* conn) {
 
     return true; // wbuf에 남은 데이터가 있을 수 있으므로, true를 리턴하여 while loop를 계속 돌린다.
 }
+
 void conn_state_res_handler(Conn* conn) {
     while (try_flush_buffer(conn)) {
     }
@@ -300,11 +427,11 @@ void conn_state_end_handler(Conn* conn) {
     assert(0); // should not reach here
 }
 
-int32_t accept_new_conn_malloc(std::vector<Conn*>& fd_to_conn, int serv_sock_fd) {
+int32_t accept_new_conn_malloc(std::vector<Conn*>& fd_to_conn, int32_t serv_sock_fd) {
 
     struct sockaddr_in client_addr;
     socklen_t client_addr_len = sizeof(client_addr);
-    int conn_sock_fd;
+    int32_t conn_sock_fd;
     conn_sock_fd = accept(serv_sock_fd, (struct sockaddr*)&client_addr, &client_addr_len);
     if (conn_sock_fd == -1) {
         std::cout << "accept error\n";

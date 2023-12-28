@@ -5,7 +5,7 @@
 #include <cstdint>
 #include <unistd.h>
 
-const uint32_t MAX_MSG_CHAR_LENGTH = 1024;
+const uint32_t MAX_MSG_CHAR_LENGTH = 4096;
 const uint32_t HEADER_SIZE = 4;
 
 // fd로부터 n 바이트를 읽어 buf에 저장합니다.

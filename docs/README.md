@@ -9,10 +9,29 @@ still in progress
 
 ## tcp stream parsing protocol
 
-client to server stream
+### client -> server stream
 
 ```text
-len(4 bytes) + data, len(4 bytes) + data, len(4 bytes) + data, ...
+(stream_byte_size, 몇 어절?, len, cmd, len, cmd, ...)
+
+쪼개어 생각하면 다음과 같다.
+(stream_byte_size, 2, [len, cmd], [len, cmd])
+
+payload는 stream_byte_size를 제외한 다음 부분을 지칭한다.
+(2, [len, cmd], [len, cmd])
+
+# ex
+(stream_byte_size, 3, [len1, "set"], [len2, "key"], [len3, "value"])
+(stream_byte_size, 2, [len1, "get"], [len2, "k"])
+```
+
+### server -> client stream
+
+```text
+(res_len, res_code, data)
+
+# ex
+(res_len, 0, "value")
 ```
 
 문자열이 아닌 것은 모두 binary 형태로 stream에 저장됨.  
@@ -30,12 +49,17 @@ in macos, `sysctl hw.byteorder` return 1234, which means little endian.
 
 ## simple redis cli api mimicking
 
--   `get k` , `set k v`, `del k` 만을 구현할 예정입니다.
+-   `get k` , `set k v`, `del k` 만 구현되었습니다.
 
 ## hash table implementation
 
 self implemented hash table.  
 -> [ht](https://github.com/DarrenKwonDev/ht)
+
+## known issues
+
+-   네트워크, 호스트 바이트 오더 변환에서 현재 shotgun surgery를 하고 있음.  
+    -> 추후에는 모든 네트워크, 호스트 바이트 오더 변환을 위해 리팩토링이 필요.
 
 ## etc
 
